@@ -3,27 +3,12 @@ const axios = require("axios");
 require("dotenv").config();
 
 const app = express();
+app.use(express.json());
+
 const { WEBHOOK_VERIFY_TOKEN, GRAPH_API_TOKEN, PORT } = process.env;
 
-// RAW BODY BUFFER LOGGER
-// This will capture the raw data before any parsing happens
-app.use((req, res, next) => {
-  let data = "";
-  req.setEncoding("utf8");
-  req.on("data", function (chunk) {
-    data += chunk;
-  });
-  req.on("end", function () {
-    req.rawBody = data;
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-    console.log("Headers:", JSON.stringify(req.headers));
-    console.log("RAW BODY:", data);
-    next();
-  });
-});
-
-app.listen(PORT, () => {
-  console.log(`Server is listening on port ${PORT}`);
+app.listen(PORT || 3000, () => {
+  console.log(`Server is listening on port ${PORT || 3000}`);
 });
 
 // Verification Endpoint
@@ -42,39 +27,81 @@ app.get("/webhook", (req, res) => {
   }
 });
 
+// Message Handling Endpoint
 app.post("/webhook", async (req, res) => {
-  // We already logged the body above.
-  // Just send 200 to keep Facebook happy.
-  res.sendStatus(200);
+  console.log("Incoming webhook:", JSON.stringify(req.body, null, 2));
 
-  // Try to parse manually to see if it works
-  try {
-    const body = JSON.parse(req.rawBody);
-    console.log("Parsed JSON successfully!");
+  const body = req.body;
 
-    // Simple auto-reply logic (if parsing worked)
-    if (body.entry && body.entry[0].changes && body.entry[0].changes[0].value.messages) {
-      const msg = body.entry[0].changes[0].value.messages[0];
-      console.log("RECEIVED MESSAGE FROM:", msg.from);
+  if (body.object) {
+    if (
+      body.entry &&
+      body.entry[0].changes &&
+      body.entry[0].changes[0].value.messages &&
+      body.entry[0].changes[0].value.messages[0]
+    ) {
+      const phone_number_id =
+        body.entry[0].changes[0].value.metadata.phone_number_id;
+      const from = body.entry[0].changes[0].value.messages[0].from;
+      const msg_body = body.entry[0].changes[0].value.messages[0].text.body;
 
-      // Reply
-      await axios({
-        method: "POST",
-        url: `https://graph.facebook.com/v21.0/${body.entry[0].changes[0].value.metadata.phone_number_id}/messages`,
-        headers: {
-          Authorization: `Bearer ${GRAPH_API_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        data: {
-          messaging_product: "whatsapp",
-          to: msg.from,
-          type: "text",
-          text: { body: "I received your message!" }
-        },
-      });
-      console.log("Replied!");
+      console.log(`Phone number ID: ${phone_number_id}`);
+      console.log(`From: ${from}`);
+      console.log(`Message body: ${msg_body}`);
+
+      // Send Interactive Button Message
+      try {
+        await axios({
+          method: "POST",
+          url: `https://graph.facebook.com/v21.0/${phone_number_id}/messages`,
+          headers: {
+            Authorization: `Bearer ${GRAPH_API_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          data: {
+            messaging_product: "whatsapp",
+            to: from,
+            type: "interactive",
+            interactive: {
+              type: "button",
+              body: {
+                text: "Welcome to ApniClass! How can we help you today?",
+              },
+              action: {
+                buttons: [
+                  {
+                    type: "reply",
+                    reply: {
+                      id: "cambridge_coaching",
+                      title: "Cambridge Coaching",
+                    },
+                  },
+                  {
+                    type: "reply",
+                    reply: {
+                      id: "ib_coaching",
+                      title: "IB Board Coaching",
+                    },
+                  },
+                  {
+                    type: "reply",
+                    reply: {
+                      id: "test_series",
+                      title: "Test Series",
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        });
+        console.log("Reply sent successfully!");
+      } catch (error) {
+        console.error("Error sending message:", error?.response?.data || error.message);
+      }
     }
-  } catch (e) {
-    console.error("Could not parse JSON body:", e.message);
+    res.sendStatus(200);
+  } else {
+    res.sendStatus(404);
   }
 });
